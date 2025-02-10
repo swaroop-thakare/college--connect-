@@ -1,0 +1,119 @@
+service: college-connect-messaging
+
+provider:
+  name: aws
+  runtime: nodejs14.x
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+functions:
+  sendMessage:
+    handler: src/lambda/messageHandler.sendMessage
+    events:
+      - http:
+          path: messages
+          method: post
+          cors: true
+
+  getMessages:
+    handler: src/lambda/messageHandler.getMessages
+    events:
+      - http:
+          path: messages/{userId}
+          method: get
+          cors: true
+
+  websocketConnect:
+    handler: src/lambda/websocketHandler.onConnect
+    events:
+      - websocket:
+          route: $connect
+
+  websocketDisconnect:
+    handler: src/lambda/websocketHandler.onDisconnect
+    events:
+      - websocket:
+          route: $disconnect
+
+resources:
+  Resources:
+    MessagesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: Messages
+        AttributeDefinitions:
+          - AttributeName: messageId
+            AttributeType: S
+          - AttributeName: senderId
+            AttributeType: S
+          - AttributeName: receiverId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: messageId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: UserMessages
+            KeySchema:
+              - AttributeName: senderId
+                KeyType: HASH
+              - AttributeName: receiverId
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
+
+    WebSocketConnectionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: WebSocketConnections
+        AttributeDefinitions:
+          - AttributeName: connectionId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: connectionId
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+
+    ElastiCacheCluster:
+      Type: AWS::ElastiCache::CacheCluster
+      Properties:
+        ClusterName: ${self:service}-${self:provider.stage}-cache
+        Engine: redis
+        CacheNodeType: cache.t3.micro
+        NumCacheNodes: 1
+
+    AppSyncAPI:
+      Type: AWS::AppSync::GraphQLApi
+      Properties:
+        Name: ${self:service}-${self:provider.stage}-api
+        AuthenticationType: AMAZON_COGNITO_USER_POOLS
+        UserPoolConfig:
+          UserPoolId: !Ref CognitoUserPool
+          DefaultAction: ALLOW
+
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: ${self:service}-${self:provider.stage}-user-pool
+
+    S3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:service}-${self:provider.stage}-media
+
+    CloudFrontDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          DefaultCacheBehavior:
+            ViewerProtocolPolicy: redirect-to-https
+            TargetOriginId: S3Origin
+            ForwardedValues:
+              QueryString: false
+          Enabled: true
+          HttpVersion: http2
+          Origins:
+            - Id: S3Origin
+              DomainName: !GetAtt S3Bucket.RegionalDomainName
+              S3OriginConfig: {}
+

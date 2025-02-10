@@ -1,0 +1,22 @@
+type Message @model @auth(rules: [{ allow: owner }]) {
+  id: ID!
+  content: String!
+  senderId: ID!
+  receiverId: ID!
+  timestamp: AWSDateTime!
+}
+
+type Subscription {
+  onNewMessage(receiverId: ID!): Message
+    @aws_subscribe(mutations: ["createMessage"])
+}
+
+type Mutation {
+  createMessage(input: CreateMessageInput!): Message
+}
+
+input CreateMessageInput {
+  content: String!
+  receiverId: ID!
+}
+
